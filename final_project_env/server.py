@@ -47,10 +47,11 @@ def get_img_views():
     score = lap + progress - 1.
 
     # Get the images
-    img1 = env.env.force_render(render_mode='rgb_array_higher_birds_eye', width=540, height=540,
-                                position=np.array([4.89, -9.30, -3.42]), fov=120)
-    img2 = env.env.force_render(render_mode='rgb_array_birds_eye', width=270, height=270)
-    img3 = env.env.force_render(render_mode='rgb_array_follow', width=128, height=128)
+    # 使用 .unwrapped 繞過 OrderEnforcing Wrapper
+    img1 = env.env.unwrapped.force_render(render_mode='rgb_array_higher_birds_eye', width=540, height=540,
+                                          position=np.array([4.89, -9.30, -3.42]), fov=120)
+    img2 = env.env.unwrapped.force_render(render_mode='rgb_array_birds_eye', width=270, height=270)
+    img3 = env.env.unwrapped.force_render(render_mode='rgb_array_follow', width=128, height=128)
     img4 = (obs.transpose((1, 2, 0))).astype(np.uint8)
 
     # Combine the images

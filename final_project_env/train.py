@@ -14,9 +14,11 @@ def train(algo, steps, shaped_reward, seed, experiment_name):
     # 這裡我們混合 Circle 和 Austria 進行訓練
     # 這樣模型既能學會 Circle 的高速過彎，也能學會 Austria 的複雜路況
     training_scenarios = [
-        "scenarios/circle_cw.yml",
-        "scenarios/austria.yml"
+        # "scenarios/circle_cw.yml",
+        # "scenarios/austria.yml",
         # 如果你有更多地圖，例如 "scenarios/barcelona.yml"，都可以加進來
+        "scenarios/austria_competition.yml",
+        "scenarios/circle_cw_competition_collisionStop.yml"
     ]
     # 修改實驗名稱以反映這是混合訓練
     reward_type = "Shaped" if shaped_reward else "Standard"
