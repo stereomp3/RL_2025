@@ -9,31 +9,32 @@ from env_utils import get_vectorized_env
 from models import POLICY_KWARGS
 
 
-def train(algo, map_name, steps, shaped_reward, seed, experiment_name):
-    # 1. 設定路徑與參數
-    # 根據你的資料夾結構調整 scenarios 路徑
-    scenario_path = f"scenarios/{map_name}.yml"
-
-    # 定義實驗名稱 (用於 Tensorboard 和 存檔)
+def train(algo, steps, shaped_reward, seed, experiment_name):
+    # --- 1. 定義多地圖訓練集 ---
+    # 這裡我們混合 Circle 和 Austria 進行訓練
+    # 這樣模型既能學會 Circle 的高速過彎，也能學會 Austria 的複雜路況
+    training_scenarios = [
+        "scenarios/circle_cw.yml",
+        "scenarios/austria.yml"
+        # 如果你有更多地圖，例如 "scenarios/barcelona.yml"，都可以加進來
+    ]
+    # 修改實驗名稱以反映這是混合訓練
     reward_type = "Shaped" if shaped_reward else "Standard"
-    run_name = f"{algo}_{map_name}_{reward_type}_{experiment_name}"
+    run_name = f"{algo}_MultiMap_{reward_type}_{experiment_name}"
     save_dir = f"./logs/{run_name}"
     os.makedirs(save_dir, exist_ok=True)
 
     print(f"========================================")
-    print(f"開始訓練: {run_name}")
-    print(f"算法: {algo} | 地圖: {map_name}")
-    print(f"獎勵機制: {reward_type}")
-    print(f"總步數: {steps}")
+    print(f"開始多地圖混合訓練")
+    print(f"訓練地圖列表: {training_scenarios}")
     print(f"========================================")
 
-    # 2. 建立並行環境 (Vectorized Environment)
-    # CPU 核心數越多，n_envs 可以設越大 (建議 4-8)
+    # 2. 建立多地圖並行環境
     env = get_vectorized_env(
-        scenario_path=scenario_path,
+        scenario_paths=training_scenarios,  # 傳入列表
         n_envs=4,
         seed=seed,
-        use_shaped_reward=shaped_reward  # 切換獎勵函數
+        use_shaped_reward=shaped_reward
     )
 
     # 3. 初始化模型
@@ -93,7 +94,7 @@ def train(algo, map_name, steps, shaped_reward, seed, experiment_name):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--algo", type=str, default="PPO", choices=["PPO", "A2C"], help="RL Algorithm")
-    parser.add_argument("--map", type=str, default="circle_cw", help="Scenario .yml file name")
+    # parser.add_argument("--map", type=str, default="circle_cw", help="Scenario .yml file name")
     parser.add_argument("--steps", type=int, default=500000, help="Total training timesteps")
     parser.add_argument("--shaped_reward", action="store_true", help="Use shaped reward (Method 2)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -101,4 +102,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    train(args.algo, args.map, args.steps, args.shaped_reward, args.seed, args.exp_name)
+    train(args.algo, args.steps, args.shaped_reward, args.seed, args.exp_name)

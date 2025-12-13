@@ -133,13 +133,13 @@ def make_racecar_env(scenario_path, rank, seed=0, render_mode="rgb_array_birds_e
         render_mode: 是否渲染 ('human' 或 'rgb_array')
         use_shaped_reward (bool): 是否啟用自定義的獎勵塑形 (True=Method 2, False=Method 1)
     """
-
+    mode = render_mode if render_mode is not None else 'rgb_array_birds_eye'
     def _init():
         # 1. 建立原始環境 並傳入 scenario 設定
         env = gym.make(
             'SingleAgentRaceEnv-v0',
             scenario=scenario_path,
-            render_mode=render_mode
+            render_mode=mode
         )
         env.reset(seed=seed + rank)  # 設定隨機種子，確保實驗可重現
         # 必須最早套用，將 Dict 動作轉為 Vector，讓後面的 Agent 和 Wrapper 都能看懂
@@ -173,31 +173,44 @@ def make_racecar_env(scenario_path, rank, seed=0, render_mode="rgb_array_birds_e
 # 建立並行化環境的主函數
 # ---------------------------------------------------------
 
-def get_vectorized_env(scenario_path, n_envs=4, seed=42, use_shaped_reward=False):
+def get_vectorized_env(scenario_paths, n_envs=4, seed=42, use_shaped_reward=False):
     """
-    建立 Vectorized Environment (多進程環境)。
+    建立支援多地圖混合訓練的 Vectorized Environment。
 
     Args:
-        scenario_path: 場景 .yml 檔案路徑
-        n_envs: 並行環境數量 (建議設為 CPU 核心數，例如 4 或 8)
+        scenario_paths (list): 地圖路徑的列表，例如 ['scenarios/circle_cw.yml', 'scenarios/austria.yml']
+        n_envs: 並行環境數量
     """
-    # 建立多個獨立運行的環境
-    env_fns = [make_racecar_env(scenario_path, i, seed, use_shaped_reward=use_shaped_reward) for i in range(n_envs)]
+    env_fns = []
+
+    # 確保 scenario_paths 是一個列表
+    if isinstance(scenario_paths, str):
+        scenario_paths = [scenario_paths]
+
+    for i in range(n_envs):
+        # --- 關鍵邏輯: 輪流分配地圖 ---
+        # 如果有 2 張圖，4 個環境：
+        # env_0 -> map[0] (Circle)
+        # env_1 -> map[1] (Austria)
+        # env_2 -> map[0] (Circle)
+        # env_3 -> map[1] (Austria)
+        scenario_path = scenario_paths[i % len(scenario_paths)]
+
+        env_fns.append(make_racecar_env(scenario_path, i, seed, use_shaped_reward=use_shaped_reward))
 
     # 使用 SubprocVecEnv 讓每個環境在獨立的 Process 跑 (加速關鍵!)
     vec_env = SubprocVecEnv(env_fns)
 
-    # 6. 堆疊幀數 (Frame Stacking) - 這是關鍵!
+    # 堆疊幀數 (Frame Stacking) - 這是關鍵!
     # 將連續 4 幀疊在一起，變成 (4, 64, 64)
     # 這樣神經網路才能「看到」速度和加速度
     vec_env = VecFrameStack(vec_env, n_stack=4)
 
-    # 7. 轉換 Image 通道 (H, W, C) -> (C, H, W)
+    # 轉換 Image 通道 (H, W, C) -> (C, H, W)
     # PyTorch 需要 Channel First 格式
     vec_env = VecTransposeImage(vec_env)
 
     return vec_env
-
 
 # ---------------------------------------------------------
 # 測試代碼 (使用者檢查用)
