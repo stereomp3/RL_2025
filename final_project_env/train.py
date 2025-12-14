@@ -2,106 +2,126 @@ import argparse
 import os
 import time
 from stable_baselines3 import PPO, A2C
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
+from stable_baselines3.common.callbacks import CheckpointCallback
 
-# 引用我們先前寫好的模組
+# 引用更新後的 env_utils
 from env_utils import get_vectorized_env
 from models import POLICY_KWARGS
+import sys
+from functools import wraps
+from datetime import datetime
 
 
-def train(algo, steps, shaped_reward, seed, experiment_name):
-    # --- 1. 定義多地圖訓練集 ---
-    # 這裡我們混合 Circle 和 Austria 進行訓練
-    # 這樣模型既能學會 Circle 的高速過彎，也能學會 Austria 的複雜路況
-    training_scenarios = [
-        # "scenarios/circle_cw.yml",
-        # "scenarios/austria.yml",
-        # 如果你有更多地圖，例如 "scenarios/barcelona.yml"，都可以加進來
-        "scenarios/austria_competition.yml",
-        "scenarios/circle_cw_competition_collisionStop.yml"
-    ]
-    # 修改實驗名稱以反映這是混合訓練
-    reward_type = "Shaped" if shaped_reward else "Standard"
-    run_name = f"{algo}_MultiMap_{reward_type}_{experiment_name}"
-    save_dir = f"./logs/{run_name}"
-    os.makedirs(save_dir, exist_ok=True)
+# 自動儲存 log
+class Tee:
+    def __init__(self, *files):
+        self.files = files
 
-    print(f"========================================")
-    print(f"開始多地圖混合訓練")
-    print(f"訓練地圖列表: {training_scenarios}")
-    print(f"========================================")
+    def write(self, obj):
+        for f in self.files:
+            f.write(obj)
+            f.flush()
 
-    # 2. 建立多地圖並行環境
-    env = get_vectorized_env(
-        scenario_paths=training_scenarios,  # 傳入列表
-        n_envs=4,
-        seed=seed,
-        use_shaped_reward=shaped_reward
-    )
+    def flush(self):
+        for f in self.files:
+            f.flush()
 
-    # 3. 初始化模型
-    # 根據參數選擇 PPO 或 A2C
-    if algo == "PPO":
-        model = PPO(
-            "CnnPolicy",
-            env,
-            policy_kwargs=POLICY_KWARGS,  # 使用自定義 CNN
-            verbose=1,
-            tensorboard_log="./tensorboard_logs/",
-            learning_rate=3e-4,
-            n_steps=2048,  # PPO 每次更新採樣的步數
-            batch_size=64,
-            n_epochs=10,
-            ent_coef=0.01,  # 熵係數，增加探索
+
+def tee_log(log_file=None):
+    """裝飾器：將 print 輸出同時存檔與顯示"""
+    if log_file is None:
+        log_file = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            original_stdout = sys.stdout
+            with open(log_file, "w", encoding="utf-8") as f:
+                sys.stdout = Tee(original_stdout, f)
+                try:
+                    result = func(*args, **kwargs)
+                finally:
+                    sys.stdout = original_stdout
+            print(f"✅ 輸出已保存到 {log_file}")
+            return result
+
+        return wrapper
+
+    return decorator
+
+def train(algo, map_names, steps, shaped_reward, seed, experiment_name):
+    log_file = f"{experiment_name}.txt"
+    original_stdout = sys.stdout
+    with open(log_file, "w", encoding="utf-8") as f:
+        sys.stdout = Tee(original_stdout, f)
+        # 解析地圖名稱列表
+        maps = map_names.split(',')  # 支援傳入 "circle_cw,austria"
+
+        reward_type = "Shaped" if shaped_reward else "Standard"
+        run_name = f"{algo}_{'_'.join(maps)}_{reward_type}_{experiment_name}"
+        save_dir = f"./logs/{run_name}"
+        os.makedirs(save_dir, exist_ok=True)
+
+        print(f"========================================")
+        print(f"開始訓練: {run_name}")
+        print(f"地圖列表: {maps}")
+        print(f"========================================")
+
+        # 1. 建立環境
+        env = get_vectorized_env(
+            scenario_names=maps,  # 傳入名稱列表
+            n_envs=4,
+            seed=seed,
+            use_shaped_reward=shaped_reward
         )
-    elif algo == "A2C":
-        model = A2C(
-            "CnnPolicy",
-            env,
-            policy_kwargs=POLICY_KWARGS,
-            verbose=1,
-            tensorboard_log="./tensorboard_logs/",
-            learning_rate=7e-4,
-            n_steps=20,  # A2C 更新頻率較高
-            ent_coef=0.01,
-        )
-    else:
-        raise ValueError("Algorithm must be PPO or A2C")
 
-    # 4. 設定回調函數 (Callbacks)
-    # 每 50,000 步儲存一次模型檢查點
-    checkpoint_callback = CheckpointCallback(
-        save_freq=50000,
-        save_path=save_dir,
-        name_prefix="model_ckpt"
-    )
+        # 2. 初始化模型
+        if algo == "PPO":
+            model = PPO(
+                "CnnPolicy",
+                env,
+                policy_kwargs=POLICY_KWARGS,
+                verbose=1,
+                tensorboard_log="./tensorboard_logs/",
+                learning_rate=3e-4,
+                n_steps=2048,
+                batch_size=64,
+                n_epochs=10,
+                ent_coef=0.01,
+            )
+        elif algo == "A2C":
+            model = A2C(
+                "CnnPolicy",
+                env,
+                policy_kwargs=POLICY_KWARGS,
+                verbose=1,
+                tensorboard_log="./tensorboard_logs/",
+                learning_rate=7e-4,
+                n_steps=20,
+                ent_coef=0.01,
+            )
 
-    # 5. 開始訓練
-    start_time = time.time()
-    model.learn(
-        total_timesteps=steps,
-        callback=checkpoint_callback,
-        tb_log_name=run_name
-    )
+        # 3. 訓練
+        checkpoint_callback = CheckpointCallback(save_freq=50000, save_path=save_dir, name_prefix="model_ckpt")
 
-    # 6. 儲存最終模型
-    final_path = os.path.join(save_dir, "final_model")
-    model.save(final_path)
-    env.close()
+        model.learn(total_timesteps=steps, callback=checkpoint_callback, tb_log_name=run_name)
 
-    print(f"訓練完成! 耗時: {(time.time() - start_time) / 60:.2f} 分鐘")
-    print(f"模型已儲存至: {final_path}")
+        model.save(os.path.join(save_dir, "final_model"))
+        env.close()
+        print("訓練完成。")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--algo", type=str, default="PPO", choices=["PPO", "A2C"], help="RL Algorithm")
-    # parser.add_argument("--map", type=str, default="circle_cw", help="Scenario .yml file name")
-    parser.add_argument("--steps", type=int, default=500000, help="Total training timesteps")
-    parser.add_argument("--shaped_reward", action="store_true", help="Use shaped reward (Method 2)")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--exp_name", type=str, default="exp1", help="Custom experiment tag")
+    parser.add_argument("--algo", type=str, default="PPO", choices=["PPO", "A2C"])
+    # 這裡改成傳入地圖名稱，用逗號分隔
+    parser.add_argument("--maps", type=str, default="circle_cw",
+                        help="Map names separated by comma (e.g. circle_cw,austria)")
+    parser.add_argument("--steps", type=int, default=500000)
+    parser.add_argument("--shaped_reward", action="store_true")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--exp_name", type=str, default="exp1")
 
     args = parser.parse_args()
 
-    train(args.algo, args.steps, args.shaped_reward, args.seed, args.exp_name)
+    train(args.algo, args.maps, args.steps, args.shaped_reward, args.seed, args.exp_name)
