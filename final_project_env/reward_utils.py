@@ -4,64 +4,68 @@ import numpy as np
 
 class RacecarRewardWrapper(gym.Wrapper):
     """
-    自定義獎勵塑形 Wrapper (Reward Shaping Wrapper)
-    用於在原始環境的獎勵基礎上，增加：
-    1. 穩定性懲罰 (動作平滑度)
-    2. 強化的碰撞懲罰
-    3. 生存獎勵 (可選)
+    自定義獎勵機制:
+    1. Motor Reward: action[0] (-1~1)
+    2. Bang-Bang Penalty: -0.1 * |action - last_action|
+    3. Progress Reward: 1000 * delta_progress
+    4. Wall Collision: -100
     """
 
-    def __init__(self, env, stability_weight=0.5, collision_penalty=-10.0, survival_reward=0.01):
+    def __init__(self, env, stability_weight=0.1, collision_penalty=-100.0, survival_reward=0.0):
         super().__init__(env)
-        self.stability_weight = stability_weight
-        self.collision_penalty = collision_penalty
-        self.survival_reward = survival_reward
+        self.stability_weight = stability_weight  # 對應 bang-bang 的係數 0.1
+        self.collision_penalty = collision_penalty  # 對應 -100
 
-        # 記錄上一次的動作，用於計算穩定性
+        # 記錄變數
         self.last_action = None
+        self.last_total_progress = None
 
     def reset(self, **kwargs):
-        # 回合重置時，清空上一次的動作記錄
-        self.last_action = None
-        return self.env.reset(**kwargs)
+        obs, info = self.env.reset(**kwargs)
+        # 初始化
+        self.last_action = np.zeros(self.action_space.shape)
+        self.last_total_progress = info.get('lap', 0) + info.get('progress', 0)
+        return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
 
-        # --- 1. 基礎獎勵 (Progress Reward) ---
-        # 原始環境通常回傳的是「進度增量 (delta progress)」，這就是我們的 Base Reward
-        # 如果需要強調速度，可以將原始獎勵放大，例如: reward *= 1.0
+        # --- 1. Motor Reward (動力獎勵) ---
+        # 根據 env.py: actions = [motor, steering]
+        # 所以 action[0] 是 motor
+        motor_reward = float(action[0])
 
-        # --- 2. 碰撞懲罰 (Collision Penalty) ---
-        # 檢查是否發生碰撞 (通常在 terminated 為 True 時發生)
-        # 注意: 不同的 Scenario 對 collision 的定義可能不同，這裡檢查 info 中的標記
-        # 如果是訓練早期，可以加重這個懲罰
-        is_collision = False
-        if 'wall_collision' in info and info['wall_collision']:
-            is_collision = True
-        elif 'collision' in info and info['collision']:  # 相容性檢查
-            is_collision = True
+        # --- 2. Bang-Bang Penalty (動作平滑度) ---
+        # -0.1 * sum(abs(current - last))
+        action_diff = np.abs(action - self.last_action)
+        bang_bang_penalty = -self.stability_weight * np.sum(action_diff)
 
-        if is_collision:
-            reward += self.collision_penalty
+        # --- 3. Progress Reward (進度獎勵) ---
+        # 計算總進度 (圈數 + 本圈百分比)
+        current_total_progress = info.get('lap', 0) + info.get('progress', 0)
 
-        # --- 3. 穩定性懲罰 (Stability Penalty) ---
-        # 懲罰動作的劇烈變化: -weight * ||action - last_action||^2
-        # 我們希望方向盤 (action[0]) 和 油門 (action[1]) 的變化是平滑的
-        if self.last_action is not None:
-            # 假設 action 是 numpy array
-            action_diff = action - self.last_action
-            # 計算 L2 Norm 的平方作為懲罰項
-            stability_loss = np.sum(np.square(action_diff))
-            reward -= self.stability_weight * stability_loss
+        # 計算增量
+        progress_delta = current_total_progress - self.last_total_progress
 
-        # 更新 last_action
+        # 異常保護: 如果換圈時產生負值，則視為 0
+        if progress_delta < -0.5:
+            progress_delta = 0.0
+
+        progress_reward = 1000.0 * progress_delta
+
+        # --- 4. Wall Collision Penalty (撞牆懲罰) ---
+        collision_reward = 0.0
+        # RaceEnv 的 info 通常包含 'wall_collision'
+        if info.get('wall_collision', False):
+            collision_reward = self.collision_penalty  # -100
+            terminated = True  # 撞牆直接結束
+
+        # --- 計算總分 ---
+        # 覆蓋原始 reward
+        new_reward = motor_reward + bang_bang_penalty + progress_reward + collision_reward
+
+        # 更新狀態
         self.last_action = np.copy(action)
+        self.last_total_progress = current_total_progress
 
-        # --- 4. 生存/時間懲罰 (Survival Reward) ---
-        # 為了避免車子停在原地不動 (如果進度獎勵不夠大)，可以給予微小的生存獎勵
-        # 或者給予微小的時間懲罰 (Time Penalty) 鼓勵盡快完成
-        # 這裡我們採用生存獎勵，鼓勵它不要因為害怕扣分而立刻撞牆結束
-        reward += self.survival_reward
-
-        return obs, reward, terminated, truncated, info
+        return obs, new_reward, terminated, truncated, info

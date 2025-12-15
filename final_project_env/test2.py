@@ -132,8 +132,9 @@ def render_dashboard(env, obs, info):
 # ==========================================
 def main():
     # --- 設定區 ---
-    MODEL_PATH = "./logs/A2C_circle_cw_competition_collisionStop_austria_competition_Shaped_multi_map_a2c_reward/model_ckpt_1600000_steps"  # 請修改為你的模型路徑
-    SCENARIO = "circle_cw_competition_collisionStop"  # (circle_cw_competition_collisionStop, austria_competition)
+    # MODEL_PATH = "./logs/PPO_circle_cw_competition_collisionStop_austria_competition_Shaped_transformer_reward/model_ckpt_200000_steps"  # 請修改為你的模型路徑
+    MODEL_PATH = "./logs/final/PPO_t.zip"  # 請修改為你的模型路徑
+    SCENARIO = "austria_competition"  # (circle_cw_competition_collisionStop, austria_competition)
     # -------------
 
     print(f"=== 本地整合測試 (Scenario: {SCENARIO}) ===")

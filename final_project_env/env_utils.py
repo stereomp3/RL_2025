@@ -64,9 +64,6 @@ def make_racecar_env(scenario, rank, seed=0, render_mode='rgb_array_birds_eye', 
         if use_shaped_reward and RacecarRewardWrapper:
             env = RacecarRewardWrapper(
                 env,
-                stability_weight=0.5,
-                collision_penalty=-5.0,
-                survival_reward=0.01
             )
 
         # 3. 影像處理

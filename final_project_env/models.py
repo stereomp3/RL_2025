@@ -4,52 +4,89 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from gymnasium import spaces
 
 
-class LightWeightCNN(BaseFeaturesExtractor):
+class TransformerCNN(BaseFeaturesExtractor):
     """
-    針對 64x64x4 (Frame Stack) 輸入優化的輕量級 CNN。
-    結構參考 Nature CNN 但減少參數以加快運算。
+    混合架構:
+    1. CNN: 負責從單張畫面提取特徵 (Spatial Features)
+    2. Transformer: 負責處理連續幀之間的關係 (Temporal Features)
     """
 
     def __init__(self, observation_space: spaces.Box, features_dim: int = 256):
         super().__init__(observation_space, features_dim)
 
-        # 假設輸入是 (Batch, Channel, Height, Width) -> (B, 4, 64, 64)
-        n_input_channels = observation_space.shape[0]
+        # 輸入形狀預期為 (Batch, n_stack, Height, Width) -> e.g., (B, 4, 64, 64)
+        n_stacked_frames = observation_space.shape[0]  # 4
+        self.img_h = observation_space.shape[1]
+        self.img_w = observation_space.shape[2]
 
+        # --- 1. CNN 特徵提取器 (針對"單幀"設計) ---
+        # 輸入 channel 設為 1 (單張灰階)
         self.cnn = nn.Sequential(
-            # Layer 1: 捕捉大特徵 (賽道邊界)
-            nn.Conv2d(n_input_channels, 32, kernel_size=8, stride=4, padding=0),
+            nn.Conv2d(1, 16, kernel_size=8, stride=4, padding=0),
             nn.ReLU(),
-
-            # Layer 2: 捕捉細節
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=0),
             nn.ReLU(),
-
-            # Layer 3: 高層特徵
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
-            nn.ReLU(),
-
-            nn.Flatten(),
+            nn.Flatten()
         )
 
-        # 計算 Flatten 後的維度
-        # 輸入 64x64 -> L1(15x15) -> L2(6x6) -> L3(4x4) -> 64*4*4 = 1024
+        # 計算 CNN 輸出的維度
         with th.no_grad():
-            n_flatten = self.cnn(th.as_tensor(observation_space.sample()[None]).float()).shape[1]
+            sample_input = th.zeros(1, 1, self.img_h, self.img_w)
+            cnn_out_dim = self.cnn(sample_input).shape[1]
 
+        # --- 2. Transformer Encoder ---
+        self.embed_dim = 128
+        self.projection = nn.Linear(cnn_out_dim, self.embed_dim)
+
+        # Positional Encoding
+        self.pos_embedding = nn.Parameter(th.randn(1, n_stacked_frames, self.embed_dim))
+
+        # Transformer Encoder Layer
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=self.embed_dim,
+            nhead=4,
+            dim_feedforward=256,
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=1)
+
+        # --- 3. 輸出層 ---
         self.linear = nn.Sequential(
-            nn.Linear(n_flatten, features_dim),
+            nn.Linear(self.embed_dim * n_stacked_frames, features_dim),
             nn.ReLU()
         )
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
-        return self.linear(self.cnn(observations))
+        batch_size = observations.shape[0]
+        n_stack = observations.shape[1]
+
+        # --- 修正點: 使用 .reshape() 取代 .view() ---
+        # .view() 在 Tensor 不連續時會報錯，.reshape() 則會自動處理
+        # (Batch, 4, 64, 64) -> (Batch * 4, 1, 64, 64)
+        x = observations.reshape(-1, 1, self.img_h, self.img_w)
+
+        # CNN 特徵提取
+        cnn_feats = self.cnn(x)
+
+        # 投影並還原序列維度
+        cnn_feats = self.projection(cnn_feats)
+        sequence = cnn_feats.reshape(batch_size, n_stack, self.embed_dim)
+
+        # 加入位置編碼
+        sequence = sequence + self.pos_embedding
+
+        # Transformer 處理
+        transformer_out = self.transformer(sequence)
+
+        # Flatten 並輸出
+        output = transformer_out.reshape(batch_size, -1)
+
+        return self.linear(output)
 
 
-# 定義 Policy 參數 (PPO 與 A2C 共用)
-# 這會告訴 SB3 使用我們定義的 LightWeightCNN，而不是預設的大型網路
+# 定義 Policy 參數
 POLICY_KWARGS = dict(
-    features_extractor_class=LightWeightCNN,
+    features_extractor_class=TransformerCNN,
     features_extractor_kwargs=dict(features_dim=256),
-    net_arch=dict(pi=[256, 128], vf=[256, 128])  # Actor 和 Critic 的全連接層
+    net_arch=dict(pi=[256, 128], vf=[256, 128])
 )
