@@ -6,6 +6,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, VecTr
 
 # 引用 racecar_gym 資料夾中的 RaceEnv
 from racecar_gym.env import RaceEnv
+from reward_utils import RacecarRewardWrapper, RacecarRewardWrapper2, RacecarRewardWrapper3
 
 
 # =============================================================================
@@ -42,11 +43,6 @@ class ImageProcessWrapper(gym.ObservationWrapper):
 # 環境建立工廠
 # =============================================================================
 
-try:
-    from reward_utils import RacecarRewardWrapper
-except ImportError:
-    RacecarRewardWrapper = None
-
 
 def make_racecar_env(scenario, rank, seed=0, render_mode='rgb_array_birds_eye', use_shaped_reward=False):
     def _init():
@@ -60,11 +56,11 @@ def make_racecar_env(scenario, rank, seed=0, render_mode='rgb_array_birds_eye', 
 
         env.reset(seed=seed + rank)
 
+        env = RacecarRewardWrapper(env)  # 預設獎勵方式
         # 2. (可選) 獎勵塑形
-        if use_shaped_reward and RacecarRewardWrapper:
-            env = RacecarRewardWrapper(
-                env,
-            )
+        if use_shaped_reward:
+            # env = RacecarRewardWrapper2(env)  # 激進獎勵方式
+            env = RacecarRewardWrapper3(env)  # 加重撞牆逞罰，和轉彎減速
 
         # 3. 影像處理
         env = ImageProcessWrapper(env, resize_dim=(64, 64))
@@ -74,7 +70,7 @@ def make_racecar_env(scenario, rank, seed=0, render_mode='rgb_array_birds_eye', 
     return _init
 
 
-def get_vectorized_env(scenario_names, n_envs=4, seed=42, use_shaped_reward=False):
+def get_vectorized_env(scenario_names, n_envs=20, seed=42, use_shaped_reward=False):
     env_fns = []
 
     if isinstance(scenario_names, str):
@@ -91,7 +87,7 @@ def get_vectorized_env(scenario_names, n_envs=4, seed=42, use_shaped_reward=Fals
         ))
 
     vec_env = SubprocVecEnv(env_fns)
-    vec_env = VecFrameStack(vec_env, n_stack=4)
+    vec_env = VecFrameStack(vec_env, n_stack=8)
     vec_env = VecTransposeImage(vec_env)
 
     return vec_env

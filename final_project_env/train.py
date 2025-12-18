@@ -49,6 +49,7 @@ def tee_log(log_file=None):
 
     return decorator
 
+
 def train(algo, map_names, steps, shaped_reward, seed, experiment_name):
     log_file = f"{experiment_name}.txt"
     original_stdout = sys.stdout
@@ -70,7 +71,7 @@ def train(algo, map_names, steps, shaped_reward, seed, experiment_name):
         # 1. 建立環境
         env = get_vectorized_env(
             scenario_names=maps,  # 傳入名稱列表
-            n_envs=4,
+            n_envs=80,
             seed=seed,
             use_shaped_reward=shaped_reward
         )
@@ -83,11 +84,12 @@ def train(algo, map_names, steps, shaped_reward, seed, experiment_name):
                 policy_kwargs=POLICY_KWARGS,
                 verbose=1,
                 tensorboard_log="./tensorboard_logs/",
-                learning_rate=3e-4,
-                n_steps=2048,
-                batch_size=64,
-                n_epochs=10,
-                ent_coef=0.01,
+                learning_rate=1e-4,
+                n_steps=4096,
+                batch_size=256,
+                n_epochs=10,  # 每次收集完數據後，重複訓練幾次 # 保持 0.01 鼓勵初期探索
+                ent_coef=0.01,  # 保持 0.01 鼓勵初期探索，
+                max_grad_norm=0.5  # 防止 Transformer 梯度爆炸
             )
         elif algo == "A2C":
             model = A2C(
@@ -96,15 +98,16 @@ def train(algo, map_names, steps, shaped_reward, seed, experiment_name):
                 policy_kwargs=POLICY_KWARGS,
                 verbose=1,
                 tensorboard_log="./tensorboard_logs/",
-                learning_rate=7e-4,
+                learning_rate=1e-4,
                 n_steps=20,
                 ent_coef=0.01,
+                max_grad_norm=0.5  # 防止 Transformer 梯度爆炸
             )
 
         # 3. 訓練
         checkpoint_callback = CheckpointCallback(save_freq=50000, save_path=save_dir, name_prefix="model_ckpt")
 
-        model.learn(total_timesteps=steps, callback=checkpoint_callback, tb_log_name=run_name)
+        model.learn(total_timesteps=steps, callback=checkpoint_callback, tb_log_name=run_name, progress_bar=True)
 
         model.save(os.path.join(save_dir, "final_model"))
         env.close()
@@ -118,7 +121,7 @@ if __name__ == "__main__":
     parser.add_argument("--maps", type=str, default="circle_cw",
                         help="Map names separated by comma (e.g. circle_cw,austria)")
     parser.add_argument("--steps", type=int, default=500000)
-    parser.add_argument("--shaped_reward", action="store_true")
+    parser.add_argument("--shaped_reward", action="store_true") # 目前 reward 使用 3，原本為 2
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--exp_name", type=str, default="exp1")
 
