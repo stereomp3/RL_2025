@@ -1,0 +1,32 @@
+========================================
+開始訓練: PPO_circle_cw_competition_collisionStop_austria_competition_Shaped_multi_map_ppo
+地圖列表: ['circle_cw_competition_collisionStop', 'austria_competition']
+========================================
+Using cuda device
+Logging to ./tensorboard_logs/PPO_circle_cw_competition_collisionStop_austria_competition_Shaped_multi_map_ppo_1
+-----------------------------
+| time/              |      |
+|    fps             | 225  |
+|    iterations      | 1    |
+|    time_elapsed    | 36   |
+|    total_timesteps | 8192 |
+-----------------------------
+-----------------------------------------
+| time/                   |             |
+|    fps                  | 165         |
+|    iterations           | 2           |
+|    time_elapsed         | 98          |
+|    total_timesteps      | 16384       |
+| train/                  |             |
+|    approx_kl            | 0.010680428 |
+|    clip_fraction        | 0.14        |
+|    clip_range           | 0.2         |
+|    entropy_loss         | -2.85       |
+|    explained_variance   | 0.0094      |
+|    learning_rate        | 0.0003      |
+|    loss                 | 10.6        |
+|    n_updates            | 10          |
+|    policy_gradient_loss | -0.00438    |
+|    std                  | 1           |
+|    value_loss           | 125         |
+-----------------------------------------

@@ -1,0 +1,5 @@
+========================================
+開始訓練: PPO_circle_cw_competition_collisionStop_austria_competition_Shaped_aggressive_transformer
+地圖列表: ['circle_cw_competition_collisionStop', 'austria_competition']
+========================================
+Using cuda device

@@ -148,12 +148,14 @@ class RacecarRewardWrapper3(gym.Wrapper):
     """
     修正版激進型獎勵 (Smart Aggressive Racing Reward)
     目標: 依然追求極速，但學會「慢進快出」的過彎技巧
+         加入 Stuck Penalty (怠速懲罰): 防止車子裝死
     """
 
-    def __init__(self, env, stability_weight=0.05, collision_penalty=-500.0):
+    def __init__(self, env, stability_weight=0.05, collision_penalty=-500.0, stuck_penalty=-0.5):
         super().__init__(env)
         self.stability_weight = stability_weight
         self.collision_penalty = collision_penalty  # 加重撞牆懲罰 (-100 -> -500)
+        self.stuck_penalty = stuck_penalty  # 停在原地會扣分
 
         self.last_action = None
         self.last_total_progress = None
@@ -217,13 +219,20 @@ class RacecarRewardWrapper3(gym.Wrapper):
             collision_reward = self.collision_penalty  # -500
             terminated = True
 
-            # --- 計算總分 ---
+        # --- 7. Stuck Penalty (停止懲罰) ---
+        # 如果速度極低，視為卡住或裝死
+        stuck_reward = 0.0
+        if speed < 0.05:
+            stuck_reward = self.stuck_penalty  # 速度太低，減分
+
+        # --- 計算總分 ---
         new_reward = (motor_reward +
                       velocity_reward +
                       bang_bang_penalty +
                       progress_reward +
                       collision_reward +
-                      danger_penalty)  # 加入危險駕駛懲罰
+                      danger_penalty +
+                      stuck_reward)
 
         # 更新狀態
         self.last_action = np.copy(action)

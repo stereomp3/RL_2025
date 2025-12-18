@@ -1,3 +1,23 @@
+import os
+import sys
+
+# ==========================================
+# ★★★ 強制設定地圖路徑 (Fix Path Issue) ★★★
+# ==========================================
+# 取得當前專案的絕對路徑
+current_dir = os.path.abspath(os.path.dirname(__file__))
+
+# 1. 將 models 資料夾的路徑設為環境變數
+# racecar_gym 會優先讀取這個變數
+models_path = os.path.join(current_dir, 'models')
+os.environ['RACECAR_ASSETS_DIR'] = models_path
+
+# 2. 確保 Python 優先引用本地的 racecar_gym (如果有的話)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+print(f"🌍 強制指定地圖資源路徑: {models_path}")
+# ==========================================
 import time
 import cv2
 import numpy as np
@@ -19,7 +39,7 @@ class LocalAgent:
         self.model = PPO.load(model_path)
 
         # Frame Stacking 緩衝區 (模擬 VecFrameStack)
-        self.n_stack = 4
+        self.n_stack = 8
         self.frame_buffer = deque(maxlen=self.n_stack)
 
     def preprocess_image(self, obs):
@@ -133,8 +153,9 @@ def render_dashboard(env, obs, info):
 def main():
     # --- 設定區 ---
     # MODEL_PATH = "./logs/PPO_circle_cw_competition_collisionStop_austria_competition_Shaped_transformer_reward/model_ckpt_200000_steps"  # 請修改為你的模型路徑
-    MODEL_PATH = "./logs/final/PPO_t.zip"  # 請修改為你的模型路徑
-    SCENARIO = "austria_competition"  # (circle_cw_competition_collisionStop, austria_competition)
+    MODEL_PATH = "./logs/final/PPO3_76000000_steps.zip"  # 請修改為你的模型路徑
+    # SCENARIO = "austria_competition"  # (circle_cw_competition_collisionStop, austria_competition)
+    SCENARIO = "circle_ccw_competition_collisionStop"  # (circle_cw_competition_collisionStop, austria_competition)
     # -------------
 
     print(f"=== 本地整合測試 (Scenario: {SCENARIO}) ===")
@@ -146,6 +167,7 @@ def main():
             render_mode='rgb_array_birds_eye',
             reset_when_collision=True
         )
+
         print("環境建立成功!")
     except Exception as e:
         print(f"環境建立失敗: {e}")
@@ -162,7 +184,63 @@ def main():
     # 3. 測試迴圈
     obs, info = env.reset()
     print("\n開始跑分! 按 'q' 鍵離開...")
+    # ==========================================
+    # ★★★ 修正版 Debug 程式碼 (v3) ★★★
+    # ==========================================
+    print("\n" + "=" * 40)
+    print("🔍 DEBUG 資訊檢查 (v3)")
+    print("=" * 40)
+    try:
+        # 取得底層環境與場景
+        base_env = env.env.unwrapped
+        scenario = getattr(base_env, '_scenario', None)
 
+        # 1. 檢查載入的地圖名稱
+        if scenario:
+            world_name = scenario.world._config.name
+            print(f"1. 目前載入的地圖 (World Name): 【 {world_name} 】")
+        else:
+            print("無法取得 Scenario 物件")
+
+        # 2. 取得車輛 ID
+        vehicle_id = None
+        if hasattr(scenario, 'agents') and 'A' in scenario.agents:
+            # 多人模式
+            # 修正點: 使用 ._id 或 .id
+            vehicle_id = scenario.agents['A'].vehicle._id
+        elif hasattr(scenario, 'agent'):
+            # 單人模式
+            # 修正點: 使用 ._id 或 .id
+            vehicle_id = scenario.agent.vehicle._id
+
+        # 3. 檢查實際位置與角度
+        if vehicle_id is not None:
+            import pybullet
+            pos, orn = pybullet.getBasePositionAndOrientation(vehicle_id)
+            euler = pybullet.getEulerFromQuaternion(orn)
+
+            yaw_degree = np.degrees(euler[2])
+            print(f"2. 車輛位置 (x, y, z): {pos}")
+            print(f"3. 車輛角度 (Yaw): {euler[2]:.4f} (約 {yaw_degree:.1f} 度)")
+
+            # 判斷是否反向 (Yaw 接近 3.14 或 -3.14 代表轉了 180 度)
+            if abs(abs(euler[2]) - 3.14) < 0.5:
+                print("   ✅ 狀態: 車頭已朝向反向 (逆時針) - 成功！")
+            elif abs(euler[2]) < 0.5:
+                print("   ❌ 狀態: 車頭朝向正向 (順時針) - 起始點未改變")
+                print("      -> 請確認您是否重新執行過 make_reverse_map.py")
+                print("      -> 請確認 starts.npz 是否覆蓋了正確的資料夾")
+            else:
+                print(f"   ❓ 狀態: 車頭朝向其他角度 ({yaw_degree:.1f} 度)")
+        else:
+            print("無法取得 Vehicle ID (vehicle._id)")
+
+    except Exception as e:
+        print(f"Debug 過程發生錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+    print("=" * 40 + "\n")
+    # ==========================================
     try:
         while True:
             # Agent 決策
