@@ -35,7 +35,7 @@ def train(algo, map_names, steps, shaped_reward, seed, experiment_name, load_pat
     # 1. 建立環境
     env = get_vectorized_env(
         scenario_names=maps,
-        n_envs=4,
+        n_envs=80,
         seed=seed,
         use_shaped_reward=shaped_reward
     )
@@ -66,7 +66,7 @@ def train(algo, map_names, steps, shaped_reward, seed, experiment_name, load_pat
                 policy_kwargs=POLICY_KWARGS,
                 verbose=1,
                 tensorboard_log="./tensorboard_logs/",
-                learning_rate=1e-4,  # 保持你之前設定的大模型參數
+                learning_rate=1e-4,
                 n_steps=4096,
                 batch_size=256,
                 n_epochs=10,

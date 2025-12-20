@@ -47,8 +47,9 @@ def main():
     # --- 設定區 ---
     # SCENARIO = 'circle_cw_competition_collisionStop'
     SCENARIO = 'austria_competition'
+    # SCENARIO = 'barcelona'
     CHECKPOINT_DIR = './logs/final/'
-    MODEL_NAME = 'PPO3_76000000_steps'  # 不需加 .zip
+    MODEL_NAME = 'PPO_continue_Austria_128000000_steps.zip'  # 不需加 .zip
 
     # -------------
 

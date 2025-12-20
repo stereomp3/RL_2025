@@ -144,18 +144,121 @@ class RacecarRewardWrapper2(gym.Wrapper):
         return obs, new_reward, terminated, truncated, info
 
 
+# class RacecarRewardWrapper3(gym.Wrapper):
+#     """
+#     修正版激進型獎勵 (Smart Aggressive Racing Reward)
+#     目標: 依然追求極速，但學會「慢進快出」的過彎技巧
+#          加入 Stuck Penalty (怠速懲罰): 防止車子裝死
+#     """
+#
+#     def __init__(self, env, stability_weight=0.05, collision_penalty=-500.0, stuck_penalty=-0.5):
+#         super().__init__(env)
+#         self.stability_weight = stability_weight
+#         self.collision_penalty = collision_penalty  # 加重撞牆懲罰 (-100 -> -500)
+#         self.stuck_penalty = stuck_penalty  # 停在原地會扣分
+#
+#         self.last_action = None
+#         self.last_total_progress = None
+#
+#     def reset(self, **kwargs):
+#         obs, info = self.env.reset(**kwargs)
+#         self.last_action = np.zeros(self.action_space.shape)
+#         self.last_total_progress = info.get('lap', 0) + info.get('progress', 0)
+#         return obs, info
+#
+#     def step(self, action):
+#         obs, reward, terminated, truncated, info = self.env.step(action)
+#
+#         # 解析動作
+#         motor = float(action[0])  # 油門 (-1 ~ 1)
+#         steering = float(action[1])  # 轉向 (-1 ~ 1)
+#
+#         # 獲取速度資訊
+#         speed = 0.0
+#         if 'velocity' in info:
+#             speed = np.linalg.norm(info['velocity'])
+#
+#         # --- 1. Dynamic Motor Reward (動態油門獎勵) ---
+#         # 直線時 (steering 小)，鼓勵大油門
+#         # 彎道時 (steering 大)，抑制油門獎勵，甚至懲罰全油門過彎
+#         steering_magnitude = abs(steering)
+#
+#         if steering_magnitude < 0.3:
+#             # 直線衝刺: 全力獎勵油門
+#             motor_reward = 2.0 * motor
+#         else:
+#             # 彎道: 減少油門獎勵，鼓勵適當收油
+#             # 如果轉向很大還全油門，獎勵會變得很小甚至負的
+#             motor_reward = 0.5 * motor
+#
+#         # --- 2. High-Speed Steering Penalty (高速轉向懲罰 - 新增) ---
+#         # 懲罰 "速度快 + 大轉向" 的危險行為
+#         # 這會教會模型: 想轉彎? 先減速!
+#         danger_penalty = -0.2 * (speed * steering_magnitude)
+#
+#         # --- 3. Velocity Reward (真實速度獎勵) ---
+#         velocity_reward = 0.1 * speed
+#
+#         # --- 4. Bang-Bang Penalty (動作平滑度) ---
+#         action_diff = np.abs(action - self.last_action)
+#         bang_bang_penalty = -self.stability_weight * np.sum(action_diff)
+#
+#         # --- 5. Progress Reward (進度獎勵 - 核心) ---
+#         current_total_progress = info.get('lap', 0) + info.get('progress', 0)
+#         progress_delta = current_total_progress - self.last_total_progress
+#
+#         if progress_delta < -0.5:
+#             progress_delta = 0.0
+#
+#         progress_reward = 2000.0 * progress_delta
+#
+#         # --- 6. Wall Collision Penalty (撞牆懲罰 - 加重) ---
+#         collision_reward = 0.0
+#         if info.get('wall_collision', False):
+#             collision_reward = self.collision_penalty  # -500
+#             terminated = True
+#
+#         # --- 7. Stuck Penalty (停止懲罰) ---
+#         # 如果速度極低，視為卡住或裝死
+#         stuck_reward = 0.0
+#         if speed < 0.05:
+#             stuck_reward = self.stuck_penalty  # 速度太低，減分
+#
+#         # --- 計算總分 ---
+#         new_reward = (motor_reward +
+#                       velocity_reward +
+#                       bang_bang_penalty +
+#                       progress_reward +
+#                       collision_reward +
+#                       danger_penalty +
+#                       stuck_reward)
+#
+#         # 更新狀態
+#         self.last_action = np.copy(action)
+#         self.last_total_progress = current_total_progress
+#
+#         return obs, new_reward, terminated, truncated, info
+
 class RacecarRewardWrapper3(gym.Wrapper):
     """
     修正版激進型獎勵 (Smart Aggressive Racing Reward)
     目標: 依然追求極速，但學會「慢進快出」的過彎技巧
          加入 Stuck Penalty (怠速懲罰): 防止車子裝死
+         # 引入 Stuck Timer: 允許短暫煞車過彎，只有長時間停滯才會被懲罰。
     """
 
     def __init__(self, env, stability_weight=0.05, collision_penalty=-500.0, stuck_penalty=-0.5):
         super().__init__(env)
         self.stability_weight = stability_weight
-        self.collision_penalty = collision_penalty  # 加重撞牆懲罰 (-100 -> -500)
-        self.stuck_penalty = stuck_penalty  # 停在原地會扣分
+        self.collision_penalty = collision_penalty
+        self.stuck_penalty = stuck_penalty
+
+        # --- 設定怠速容忍度 ---
+        # 假設 simulation time_step = 0.02s (通常設定)
+        # 50 steps * 0.02s = 1.0 秒
+        # 代表車子可以連續慢速行駛 1 秒而不被懲罰 (足夠過一個彎)
+        self.stuck_threshold_steps = 50
+        self.stuck_counter = 0  # 計時器
 
         self.last_action = None
         self.last_total_progress = None
@@ -164,66 +267,74 @@ class RacecarRewardWrapper3(gym.Wrapper):
         obs, info = self.env.reset(**kwargs)
         self.last_action = np.zeros(self.action_space.shape)
         self.last_total_progress = info.get('lap', 0) + info.get('progress', 0)
+
+        # 重置計時器
+        self.stuck_counter = 0
+
         return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
 
         # 解析動作
-        motor = float(action[0])  # 油門 (-1 ~ 1)
-        steering = float(action[1])  # 轉向 (-1 ~ 1)
+        motor = float(action[0])  # 油門
+        steering = float(action[1])  # 轉向
 
-        # 獲取速度資訊
+        # 獲取速度
         speed = 0.0
         if 'velocity' in info:
             speed = np.linalg.norm(info['velocity'])
 
-        # --- 1. Dynamic Motor Reward (動態油門獎勵) ---
-        # 直線時 (steering 小)，鼓勵大油門
-        # 彎道時 (steering 大)，抑制油門獎勵，甚至懲罰全油門過彎
+        # --- 1. Dynamic Motor Reward ---
         steering_magnitude = abs(steering)
-
         if steering_magnitude < 0.3:
-            # 直線衝刺: 全力獎勵油門
-            motor_reward = 2.0 * motor
+            motor_reward = 2.0 * motor  # 直線鼓勵衝刺
         else:
-            # 彎道: 減少油門獎勵，鼓勵適當收油
-            # 如果轉向很大還全油門，獎勵會變得很小甚至負的
-            motor_reward = 0.5 * motor
+            motor_reward = 0.5 * motor  # 彎道允許收油
 
-        # --- 2. High-Speed Steering Penalty (高速轉向懲罰 - 新增) ---
-        # 懲罰 "速度快 + 大轉向" 的危險行為
-        # 這會教會模型: 想轉彎? 先減速!
-        # 係數 0.2 可以根據訓練狀況調整
+        # --- 2. High-Speed Steering Penalty ---
         danger_penalty = -0.2 * (speed * steering_magnitude)
 
-        # --- 3. Velocity Reward (真實速度獎勵) ---
+        # --- 3. Velocity Reward ---
         velocity_reward = 0.1 * speed
 
-        # --- 4. Bang-Bang Penalty (動作平滑度) ---
+        # --- 4. Bang-Bang Penalty ---
         action_diff = np.abs(action - self.last_action)
         bang_bang_penalty = -self.stability_weight * np.sum(action_diff)
 
-        # --- 5. Progress Reward (進度獎勵 - 核心) ---
+        # --- 5. Progress Reward ---
         current_total_progress = info.get('lap', 0) + info.get('progress', 0)
         progress_delta = current_total_progress - self.last_total_progress
-
         if progress_delta < -0.5:
             progress_delta = 0.0
-
         progress_reward = 2000.0 * progress_delta
 
-        # --- 6. Wall Collision Penalty (撞牆懲罰 - 加重) ---
+        # --- 6. Wall Collision Penalty ---
         collision_reward = 0.0
         if info.get('wall_collision', False):
-            collision_reward = self.collision_penalty  # -500
+            collision_reward = self.collision_penalty
             terminated = True
 
-        # --- 7. Stuck Penalty (停止懲罰) ---
-        # 如果速度極低，視為卡住或裝死
+        # --- 7. Stuck Penalty (怠速懲罰 - 新增) ---
+        # 如果速度極低 (例如小於 0.05)，視為卡住或裝死
+        # 給予負獎勵，讓它覺得「停著比動還痛苦」
         stuck_reward = 0.0
         if speed < 0.05:
-            stuck_reward = self.stuck_penalty  # 速度太低，減分
+            stuck_reward = self.stuck_penalty  # 例如 -0.5
+            # 可選: 如果你想讓它卡住太久直接重置，可以加個計數器
+            # 但通常給負分它就會自己想辦法動了
+
+        # # 判斷是否處於低速狀態 Time Buffer
+        # if speed < 0.1:
+        #     self.stuck_counter += 1
+        # else:
+        #     # 只要速度恢復，計時器歸零 (或者您可以選擇緩慢減少 count)
+        #     self.stuck_counter = 0
+        #
+        # # 只有當「連續」低速超過閾值時，才開始扣分
+        # if self.stuck_counter > self.stuck_threshold_steps:
+        #     stuck_reward = self.stuck_penalty
+        #     # (選用) 如果你希望卡太久直接重置，可以在這裡設 terminated = True
 
         # --- 計算總分 ---
         new_reward = (motor_reward +
